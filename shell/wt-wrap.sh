@@ -16,7 +16,7 @@
 # 配置先の既定値はコマンドごとに異なる:
 #   agy   → .gemini/worktree
 #   codex → .codex/worktree
-#   それ以外 → .claude/worktrees
+#   それ以外 → .<コマンド名>/worktree
 
 : "${WT_WRAP_COMMANDS:=codex agy}"
 
@@ -40,9 +40,8 @@ _wt_root_dir_for() {
     printf '%s\n' "$WT_ROOT_DIR"
   else
     case "$cmd" in
-      agy)   printf '.gemini/worktree\n' ;;
-      codex) printf '.codex/worktree\n' ;;
-      *)     printf '.claude/worktrees\n' ;;
+      agy) printf '.gemini/worktree\n' ;;
+      *)   printf '.%s/worktree\n' "$cmd" ;;
     esac
   fi
 }

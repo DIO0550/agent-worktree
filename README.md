@@ -14,7 +14,7 @@ wt: /path/to/repo/.gemini/worktree/AA で agy を起動します
 - `codex -w <name>` / `agy -w <name>` で worktree を自動作成してその中で起動
 - `codex -w` (名前省略) で矢印キーのセレクタを表示。既存 worktree の選択と新規作成の両方に対応
 - `.worktreeinclude` を Claude Code Desktop と同じ AND 条件 (パターン一致 かつ gitignore 済み) で展開。パターン解釈は git 本体に委譲
-- 配置先はエージェントごとに自動で切り替え (`agy` → `.gemini/worktree/<name>`, `codex` → `.codex/worktree/<name>`, その他 → `.claude/worktrees/<name>`)。ブランチ名 `worktree-<name>`・分岐元 `origin/HEAD` は Claude Code のネイティブ挙動に合わせたデフォルト
+- 配置先はエージェントごとに自動で切り替え (`agy` → `.gemini/worktree/<name>`, `codex` → `.codex/worktree/<name>`, その他 → `.<コマンド名>/worktree/<name>`)。ブランチ名 `worktree-<name>`・分岐元 `origin/HEAD` は Claude Code のネイティブ挙動に合わせたデフォルト
 - 依存は git と bash のみ。fzf などの外部ツールは不要
 
 ## インストール
@@ -78,7 +78,8 @@ wt include <path>     # 既存 worktree へ .worktreeinclude を手動展開
 |---|---|
 | `agy` (antigravity) | `.gemini/worktree` |
 | `codex` | `.codex/worktree` |
-| その他 / `wt` 単体 | `.claude/worktrees` |
+| その他のラップコマンド | `.<コマンド名>/worktree` |
+| `wt` 単体 | `.claude/worktrees` |
 
 使用する配置先 (`.gemini/worktree/` など) は `.gitignore` に追加してください。
 
