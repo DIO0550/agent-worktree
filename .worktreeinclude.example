@@ -1,0 +1,10 @@
+# .worktreeinclude のサンプル
+# プロジェクトルートに .worktreeinclude として置く
+#
+# 記法は .gitignore と同じ。ただしコピーされるのは
+# 「このパターンに一致し、かつ gitignore 済みの未追跡ファイル」のみ。
+# (git 管理下のファイルは worktree に元から入るため対象外)
+
+.env
+.env.*
+**/.claude/settings.local.json

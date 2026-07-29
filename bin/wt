@@ -1,0 +1,263 @@
+#!/usr/bin/env bash
+# agent-worktree コア CLI
+#
+# 任意の CLI エージェント (codex / agy など) を git worktree 内で起動するための
+# worktree 解決・作成・選択・.worktreeinclude 展開を担う。
+#
+# サブコマンド:
+#   wt resolve <name>   worktree のパスを出力 (無ければ作成)
+#   wt create  <name>   worktree を新規作成してパスを出力
+#   wt select           矢印キーのセレクタでパスを1つ出力 (新規作成も可)
+#   wt list             worktree 一覧を表示
+#   wt remove <name>    worktree とブランチを削除
+#   wt include <path>   指定 worktree へ .worktreeinclude を手動展開
+#
+# 環境変数:
+#   WT_ROOT_DIR       worktree の配置先 (既定: .claude/worktrees) ※メイン worktree からの相対
+#   WT_BRANCH_PREFIX  ブランチ名の接頭辞 (既定: worktree-)
+#   WT_BASE_REF       分岐元 (既定: origin/HEAD → 無ければ HEAD)
+set -euo pipefail
+
+WT_ROOT_DIR="${WT_ROOT_DIR:-.claude/worktrees}"
+WT_BRANCH_PREFIX="${WT_BRANCH_PREFIX:-worktree-}"
+
+err() { printf 'wt: %s\n' "$*" >&2; }
+die() { err "$*"; exit 1; }
+
+# ---------------------------------------------------------------------------
+# git ヘルパー
+# ---------------------------------------------------------------------------
+
+main_worktree() {
+  # `git worktree list` の先頭がメイン worktree
+  git worktree list --porcelain | awk '/^worktree /{print substr($0,10); exit}'
+}
+
+ensure_repo() {
+  git rev-parse --git-dir >/dev/null 2>&1 || die "git リポジトリ内で実行してください"
+}
+
+base_ref() {
+  if [ -n "${WT_BASE_REF:-}" ]; then
+    printf '%s\n' "$WT_BASE_REF"
+    return
+  fi
+  # origin/HEAD が解決できればデフォルトブランチから分岐 (Claude Code と同じ挙動)
+  local ref
+  if ref=$(git -C "$1" symbolic-ref -q refs/remotes/origin/HEAD 2>/dev/null); then
+    printf '%s\n' "${ref#refs/remotes/}"
+  else
+    printf 'HEAD\n'
+  fi
+}
+
+# ---------------------------------------------------------------------------
+# .worktreeinclude 展開
+#
+# コピー対象 = 「gitignore 済みの未追跡ファイル」∩「.worktreeinclude のパターン」
+# (Claude Code Desktop の仕様に合わせた AND 条件)
+# パターン解釈は一時リポジトリの .gitignore として git 本体に委譲する。
+# ---------------------------------------------------------------------------
+
+copy_one() {
+  # clonefile (APFS) が使えれば実体共有コピー、ダメなら通常コピー
+  local src=$1 dst=$2
+  mkdir -p "$(dirname "$dst")"
+  cp -c "$src" "$dst" 2>/dev/null || cp "$src" "$dst"
+}
+
+expand_include() {
+  local main=$1 dest=$2
+  local include_file="$main/.worktreeinclude"
+  [ -f "$include_file" ] || return 0
+
+  local tmp
+  tmp=$(mktemp -d) || die "mktemp に失敗しました"
+  git init -q "$tmp"
+  cp "$include_file" "$tmp/.gitignore"
+
+  local copied=0 rel
+  while IFS= read -r rel; do
+    [ -f "$main/$rel" ] || continue          # ディレクトリ項目はファイル単位で列挙済み
+    [ -e "$dest/$rel" ] && continue          # 既存ファイルは上書きしない
+    copy_one "$main/$rel" "$dest/$rel"
+    copied=$((copied + 1))
+  done < <(
+    git -C "$main" ls-files --others --ignored --exclude-standard \
+      | git -C "$tmp" check-ignore --stdin 2>/dev/null || true
+  )
+  rm -rf "$tmp"
+  err ".worktreeinclude: ${copied} 個のファイルをコピーしました"
+}
+
+# ---------------------------------------------------------------------------
+# worktree 操作
+# ---------------------------------------------------------------------------
+
+wt_path_of() {
+  # 名前 → 既存 worktree のパス (無ければ空)
+  local main=$1 name=$2
+  local candidate="$main/$WT_ROOT_DIR/$name"
+  git worktree list --porcelain | awk '/^worktree /{print substr($0,10)}' \
+    | grep -Fx "$candidate" || true
+}
+
+wt_create() {
+  local main=$1 name=$2
+  local path="$main/$WT_ROOT_DIR/$name"
+  local branch="${WT_BRANCH_PREFIX}${name}"
+  local base
+  base=$(base_ref "$main")
+
+  [ -e "$path" ] && die "既にディレクトリが存在します: $path"
+  mkdir -p "$main/$WT_ROOT_DIR"
+
+  if git -C "$main" show-ref -q --verify "refs/heads/$branch"; then
+    err "既存ブランチ $branch をチェックアウトします"
+    git -C "$main" worktree add "$path" "$branch" >&2
+  else
+    err "$base から $branch を作成します"
+    git -C "$main" worktree add -b "$branch" "$path" "$base" >&2
+  fi
+  expand_include "$main" "$path"
+  printf '%s\n' "$path"
+}
+
+wt_list_names() {
+  # WT_ROOT_DIR 配下にある worktree の名前一覧
+  local main=$1 p
+  git worktree list --porcelain | awk '/^worktree /{print substr($0,10)}' \
+    | while IFS= read -r p; do
+        case "$p" in
+          "$main/$WT_ROOT_DIR"/*) printf '%s\n' "${p#"$main/$WT_ROOT_DIR/"}" ;;
+        esac
+      done
+}
+
+# ---------------------------------------------------------------------------
+# セレクタ UI (fzf 不使用 / ANSI エスケープ / /dev/tty で対話)
+# 選択結果のみ標準出力に返す
+# ---------------------------------------------------------------------------
+
+selector() {
+  local main=$1
+  local -a items=()
+  local name
+  while IFS= read -r name; do items+=("$name"); done < <(wt_list_names "$main")
+  items+=("+ 新規作成")
+
+  local count=${#items[@]} cur=0 i key rest
+
+  exec 3</dev/tty 4>/dev/tty
+  printf 'worktree を選択 (↑↓: 移動, Enter: 決定, q: 中止)\n' >&4
+  # 初回描画分の行を確保
+  for ((i = 0; i < count; i++)); do printf '\n' >&4; done
+
+  draw() {
+    printf '\033[%dA' "$count" >&4
+    for ((i = 0; i < count; i++)); do
+      if [ "$i" -eq "$cur" ]; then
+        printf '\033[2K\033[7m > %s \033[0m\n' "${items[i]}" >&4
+      else
+        printf '\033[2K   %s\n' "${items[i]}" >&4
+      fi
+    done
+  }
+
+  while :; do
+    draw
+    IFS= read -rsn1 key <&3 || key=q
+    if [ "$key" = $'\x1b' ]; then
+      IFS= read -rsn2 -t 0.05 rest <&3 || rest=''
+      case "$rest" in
+        '[A') cur=$(( (cur + count - 1) % count )) ;;
+        '[B') cur=$(( (cur + 1) % count )) ;;
+        *) exec 3<&- 4>&-; return 1 ;;          # ESC 単押しで中止
+      esac
+    elif [ "$key" = 'q' ]; then
+      exec 3<&- 4>&-; return 1
+    elif [ -z "$key" ]; then                     # Enter
+      break
+    elif [ "$key" = 'k' ]; then cur=$(( (cur + count - 1) % count ))
+    elif [ "$key" = 'j' ]; then cur=$(( (cur + 1) % count ))
+    fi
+  done
+
+  local choice="${items[cur]}"
+  if [ "$choice" = "+ 新規作成" ]; then
+    printf 'worktree 名: ' >&4
+    IFS= read -r name <&3
+    exec 3<&- 4>&-
+    [ -n "$name" ] || return 1
+    cmd_resolve "$name"
+  else
+    exec 3<&- 4>&-
+    printf '%s\n' "$main/$WT_ROOT_DIR/$choice"
+  fi
+}
+
+# ---------------------------------------------------------------------------
+# サブコマンド
+# ---------------------------------------------------------------------------
+
+cmd_resolve() {
+  local name=$1 main path
+  main=$(main_worktree)
+  path=$(wt_path_of "$main" "$name")
+  if [ -n "$path" ]; then
+    printf '%s\n' "$path"
+  else
+    wt_create "$main" "$name"
+  fi
+}
+
+cmd_create() {
+  local main; main=$(main_worktree)
+  wt_create "$main" "$1"
+}
+
+cmd_select() {
+  local main; main=$(main_worktree)
+  selector "$main"
+}
+
+cmd_list() {
+  git worktree list
+}
+
+cmd_remove() {
+  local name=$1 main path
+  main=$(main_worktree)
+  path=$(wt_path_of "$main" "$name")
+  [ -n "$path" ] || die "worktree が見つかりません: $name"
+  git -C "$main" worktree remove "$path"
+  git -C "$main" branch -d "${WT_BRANCH_PREFIX}${name}" 2>/dev/null \
+    || err "ブランチ ${WT_BRANCH_PREFIX}${name} は未マージのため残しました (-D で手動削除してください)"
+}
+
+cmd_include() {
+  local main; main=$(main_worktree)
+  expand_include "$main" "$1"
+}
+
+usage() {
+  sed -n '2,20p' "$0" | sed 's/^# \{0,1\}//'
+}
+
+main() {
+  ensure_repo
+  local cmd=${1:-}
+  shift || true
+  case "$cmd" in
+    resolve) [ $# -eq 1 ] || die "使い方: wt resolve <name>"; cmd_resolve "$1" ;;
+    create)  [ $# -eq 1 ] || die "使い方: wt create <name>";  cmd_create "$1" ;;
+    select)  cmd_select ;;
+    list)    cmd_list ;;
+    remove)  [ $# -eq 1 ] || die "使い方: wt remove <name>";  cmd_remove "$1" ;;
+    include) [ $# -eq 1 ] || die "使い方: wt include <path>"; cmd_include "$1" ;;
+    ""|-h|--help) usage ;;
+    *) die "不明なサブコマンド: $cmd" ;;
+  esac
+}
+
+main "$@"
