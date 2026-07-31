@@ -14,6 +14,7 @@ wt: /path/to/repo/.gemini/worktree/AA で agy を起動します
 - `codex -w <name>` / `agy -w <name>` で worktree を自動作成してその中で起動
 - `codex -w` (名前省略) で矢印キーのセレクタを表示。既存 worktree の選択と新規作成の両方に対応
 - `.worktreeinclude` を Claude Code Desktop と同じ AND 条件 (パターン一致 かつ gitignore 済み) で展開。パターン解釈は git 本体に委譲
+- エージェント終了時に worktree を「残す / 削除」から選択 (Claude Code の終了時プロンプト相当)。`WT_ON_EXIT` で常に残す・常に削除にも変更可
 - 配置先はエージェントごとに自動で切り替え (`agy` → `.gemini/worktree/<name>`, `codex` → `.codex/worktree/<name>`, その他 → `.<コマンド名>/worktree/<name>`)。ブランチ名 `worktree-<name>`・分岐元 `origin/HEAD` は Claude Code のネイティブ挙動に合わせたデフォルト
 - 依存は git と bash のみ。fzf などの外部ツールは不要
 
@@ -71,6 +72,7 @@ wt include <path>     # 既存 worktree へ .worktreeinclude を手動展開
 | `WT_ROOT_DIR_<CMD>` | 未設定 | コマンド別の配置先上書き (例: `WT_ROOT_DIR_CODEX=.mycodex/wt`)。コマンド名は大文字化し `-` は `_` に置換 |
 | `WT_BRANCH_PREFIX` | `worktree-` | ブランチ名の接頭辞 |
 | `WT_BASE_REF` | `origin/HEAD` (無ければ `HEAD`) | 分岐元 |
+| `WT_ON_EXIT` | `ask` | エージェント終了時の worktree の扱い。`ask`: 残すか削除するかを選択 / `keep`: 常に残す / `remove`: 常に削除 |
 
 配置先の既定値はラップするコマンドごとに異なります。優先順位は `WT_ROOT_DIR_<CMD>` > `WT_ROOT_DIR` > 既定値です。
 
