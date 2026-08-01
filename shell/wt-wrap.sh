@@ -3,10 +3,12 @@
 # WT_WRAP_COMMANDS に列挙したコマンドをシェル関数でラップし、
 # -w / --worktree オプションを横取りして worktree 内で起動する。
 #
-#   codex -w AA          → worktree "AA" を解決 (無ければ作成) してその中で codex 起動
-#   codex -w             → セレクタで worktree を選択 (新規作成も可)
+#   codex -w AA           → worktree "AA" を解決 (無ければ作成) してその中で codex 起動
+#   codex -w              → セレクタで worktree を選択 (新規作成も可)
 #   codex -w AA --model x → -w AA 以外の引数はそのまま codex へ渡す
-#   codex (フラグ無し)    → 通常どおり起動
+#   codex -w -- exec "…"  → -- 以降は解釈しない。worktree 名と紛らわしい
+#                           サブコマンドを渡したいときに使う (この例では選択 UI が出る)
+#   codex (フラグ無し)     → 通常どおり起動
 #
 # 環境変数:
 #   WT_WRAP_COMMANDS   ラップするコマンド (空白区切り, 既定: "codex agy")
@@ -68,6 +70,14 @@ _wt_run() {
       --worktree=*)
         wt_mode=1
         wt_name=${arg#--worktree=}
+        ;;
+      --)
+        # -- 以降は一切解釈せずそのままエージェントへ渡す
+        # (worktree 名と紛らわしいサブコマンドを渡したいとき: codex -w -- exec "...")
+        # -- 自体は渡さない。リテラルの -- が必要なら -- -- と書く
+        shift
+        if [ $# -gt 0 ]; then passthru+=("$@"); fi
+        break
         ;;
       *)
         passthru+=("$arg")

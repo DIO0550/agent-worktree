@@ -13,7 +13,7 @@ wt: /path/to/repo/.gemini/worktree/AA で agy を起動します
 
 - `codex -w <name>` / `agy -w <name>` で worktree を自動作成してその中で起動
 - `codex -w` (名前省略) で矢印キーのセレクタを表示。既存 worktree の選択と新規作成の両方に対応
-- `.worktreeinclude` に書いたファイルを worktree へコピー。パターン解釈は git 本体に委譲するので記法は `.gitignore` と同じ
+- `.worktreeinclude` を Claude Code Desktop と同じ AND 条件 (パターン一致 かつ gitignore 済み) で展開。パターン解釈は git 本体に委譲。条件から漏れたファイルは理由付きで警告するので取りこぼしに気づける
 - エージェント終了時に worktree を「残す / 削除」から選択 (Claude Code の終了時プロンプト相当)。`WT_ON_EXIT` で常に残す・常に削除にも変更可
 - 配置先はエージェントごとに自動で切り替え (`agy` → `.gemini/worktree/<name>`, `codex` → `.codex/worktree/<name>`, その他 → `.<コマンド名>/worktree/<name>`)。ブランチ名 `worktree-<name>`・分岐元 `origin/HEAD` は Claude Code のネイティブ挙動に合わせたデフォルト
 - 依存は git と bash のみ。fzf などの外部ツールは不要
@@ -71,7 +71,16 @@ source ~/.zshrc
 agy -w AA             # worktree "AA" を解決 (無ければ作成) して agy 起動
 agy -w                # セレクタで選択 (「+ 新規作成」も選べる)
 agy -w AA --model x   # -w AA 以外の引数はそのまま agy へ渡る
+agy --worktree=AA ... # 名前は = でも渡せる
 agy                   # フラグ無しなら通常どおり起動
+```
+
+`-w` の直後の引数は worktree 名として解釈されるため、名前を省略しつつサブコマンドを渡したい場合は `--` で区切ります。`--` 以降は一切解釈せず、そのままエージェントへ渡ります (`--` 自体は渡りません)。
+
+```bash
+codex -w -- exec "プロンプト"     # セレクタで選択 → codex exec "プロンプト"
+codex -w AA -- exec "プロンプト"  # worktree AA で codex exec "プロンプト"
+codex -w AA -- -- --raw          # リテラルの -- が必要なら -- を重ねる
 ```
 
 コアの `wt` コマンドは単体でも使えます。
@@ -81,7 +90,7 @@ wt resolve AA         # パスを出力 (無ければ作成)
 wt create AA          # 新規作成
 wt select             # セレクタでパスを1つ出力
 wt list               # worktree 一覧
-wt remove AA          # worktree とブランチを削除 (未マージなら残す)
+wt remove AA          # worktree を削除 (未追跡ファイルがあっても消す)。ブランチは未マージなら残す
 wt include <path>     # 既存 worktree へ .worktreeinclude を手動展開
 ```
 
@@ -95,7 +104,13 @@ wt include <path>     # 既存 worktree へ .worktreeinclude を手動展開
 **/.claude/settings.local.json
 ```
 
-コピーされるのは「パターンに一致する未追跡ファイル」です。`.gitignore` に書いてあるかどうかは問いません (追跡済みのファイルは worktree のチェックアウトに含まれるので対象外)。
+コピーされるのは「パターンに一致し、かつ gitignore 済みの未追跡ファイル」のみです (Claude Code Desktop と同じ AND 条件)。パターンに一致しても `.gitignore` に無いファイルはコピーされませんが、黙って落ちると気づけないので警告します。
+
+```console
+wt: .worktreeinclude: 1 個のファイルをコピーしました
+wt: .worktreeinclude: 2 個は gitignore されていないためコピーしませんでした (.claude/settings.local.json, config/local.yml)
+wt:   コピーするには .gitignore にも追加してください
+```
 
 コピーは worktree の新規作成時だけでなく、既存の worktree に入るときにも行われます。既存ファイルは上書きしないので、`.worktreeinclude` に後から項目を追加しても次回そのまま反映されます。手動で反映したい場合は `wt include <path>` を使います。
 

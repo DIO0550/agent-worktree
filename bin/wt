@@ -9,7 +9,7 @@
 #   wt create  <name>   worktree を新規作成してパスを出力
 #   wt select           矢印キーのセレクタでパスを1つ出力 (新規作成も可)
 #   wt list             worktree 一覧を表示
-#   wt remove <name>    worktree とブランチを削除
+#   wt remove <name>    worktree とブランチを削除 (未追跡ファイルがあっても消す)
 #   wt include <path>   指定 worktree へ .worktreeinclude を再展開
 #
 # 環境変数:
@@ -54,10 +54,11 @@ base_ref() {
 # ---------------------------------------------------------------------------
 # .worktreeinclude 展開
 #
-# コピー対象 = 「.worktreeinclude のパターンに一致する未追跡ファイル」
-# gitignore 済みかどうかは問わない (書いたのにコピーされない、を避けるため)。
-# 追跡済みファイルは worktree のチェックアウトに含まれるので対象外。
+# コピー対象 = 「gitignore 済みの未追跡ファイル」∩「.worktreeinclude のパターン」
+# (Claude Code Desktop の仕様に合わせた AND 条件)
 # パターン解釈は一時リポジトリの .gitignore として git 本体に委譲する。
+# AND 条件から漏れたファイル (パターンには一致するが gitignore されていない) は
+# 黙って落とすと気づけないので警告する。
 # ---------------------------------------------------------------------------
 
 copy_one() {
@@ -90,16 +91,35 @@ expand_include() {
   local copied=0 rel
   while IFS= read -r rel; do
     [ -f "$main/$rel" ] || continue          # ディレクトリ項目はファイル単位で列挙済み
-    [ -e "$dest/$rel" ] && continue          # 既存ファイルは上書きしない
+    if [ -e "$dest/$rel" ]; then continue; fi # 既存ファイルは上書きしない
     copy_one "$main/$rel" "$dest/$rel"
     copied=$((copied + 1))
   done < <(
-    # --exclude-standard を付けないので gitignore 済みの未追跡ファイルも列挙される
-    git -C "$main" ls-files --others \
+    git -C "$main" ls-files --others --ignored --exclude-standard \
+      | match_include "$tmp"
+  )
+
+  # パターンには一致するが gitignore されていない = AND 条件から漏れたファイル
+  local skipped=0 examples=''
+  while IFS= read -r rel; do
+    [ -f "$main/$rel" ] || continue
+    if [ -e "$dest/$rel" ]; then continue; fi
+    skipped=$((skipped + 1))
+    if [ "$skipped" -le 3 ]; then examples="${examples:+$examples, }$rel"; fi
+  done < <(
+    git -C "$main" ls-files --others --exclude-standard \
       | match_include "$tmp"
   )
   rm -rf "$tmp"
-  [ "$copied" -gt 0 ] && err ".worktreeinclude: ${copied} 個のファイルをコピーしました"
+
+  if [ "$copied" -gt 0 ]; then
+    err ".worktreeinclude: ${copied} 個のファイルをコピーしました"
+  fi
+  if [ "$skipped" -gt 0 ]; then
+    if [ "$skipped" -gt 3 ]; then examples="$examples ほか"; fi
+    err ".worktreeinclude: ${skipped} 個は gitignore されていないためコピーしませんでした ($examples)"
+    err "  コピーするには .gitignore にも追加してください"
+  fi
   return 0
 }
 
@@ -245,7 +265,9 @@ cmd_remove() {
   main=$(main_worktree)
   path=$(wt_path_of "$main" "$name")
   [ -n "$path" ] || die "worktree が見つかりません: $name"
-  git -C "$main" worktree remove "$path"
+  # --force: 未追跡ファイルや未コミットの変更が残っていても消す
+  # (worktree は使い捨て前提なので、消せずに残る方が困る)
+  git -C "$main" worktree remove --force "$path"
   git -C "$main" branch -d "${WT_BRANCH_PREFIX}${name}" 2>/dev/null \
     || err "ブランチ ${WT_BRANCH_PREFIX}${name} は未マージのため残しました (-D で手動削除してください)"
 }
