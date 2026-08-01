@@ -20,14 +20,50 @@ wt: /path/to/repo/.gemini/worktree/AA で agy を起動します
 
 ## インストール
 
+クローン不要、1コマンドで入ります。
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/dio0550/agent-worktree/main/install.sh | bash
+source ~/.zshrc       # または ~/.bashrc
+```
+
+本体は `~/.agent-worktree` に配置され、rc ファイル (`$SHELL` から自動判定) に `# >>> agent-worktree >>>` マーカー付きブロックが追記されます。更新は同じコマンドを再実行するだけです。
+
+シェルを明示指定する場合は引数を渡します。
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/dio0550/agent-worktree/main/install.sh | bash -s -- zsh
+```
+
+アンインストール (rc のブロックと `~/.agent-worktree` を削除):
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/dio0550/agent-worktree/main/uninstall.sh | bash
+```
+
+インストーラの挙動は環境変数で変更できます。
+
+| 変数 | 既定値 | 説明 |
+|---|---|---|
+| `AGENT_WORKTREE_HOME` | `~/.agent-worktree` | 本体の配置先 |
+| `AGENT_WORKTREE_REF` | `main` | 取得する git ref (タグやブランチを指定可) |
+| `AGENT_WORKTREE_REPO` | `dio0550/agent-worktree` | 取得元リポジトリ |
+
+<details>
+<summary>クローンして使う場合 (開発時)</summary>
+
+`install.sh` はスクリプトと同じ場所に `bin/wt` と `shell/wt-wrap.sh` があればダウンロードせず、そのクローンをそのまま参照します。
+
 ```bash
 git clone https://github.com/dio0550/agent-worktree.git
 cd agent-worktree
 ./install.sh          # $SHELL から自動判定 (bash / zsh を明示指定も可)
-source ~/.zshrc       # または ~/.bashrc
+source ~/.zshrc
 ```
 
-rc ファイルには `# >>> agent-worktree >>>` マーカー付きブロックが追記されます。削除は `./uninstall.sh` で行えます。
+この場合 `uninstall.sh` は rc のブロックだけを消し、クローンしたリポジトリには触れません。
+
+</details>
 
 ## 使い方
 
