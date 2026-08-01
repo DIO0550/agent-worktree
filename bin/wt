@@ -10,7 +10,7 @@
 #   wt select           矢印キーのセレクタでパスを1つ出力 (新規作成も可)
 #   wt list             worktree 一覧を表示
 #   wt remove <name>    worktree とブランチを削除
-#   wt include <path>   指定 worktree へ .worktreeinclude を手動展開
+#   wt include <path>   指定 worktree へ .worktreeinclude を再展開
 #
 # 環境変数:
 #   WT_ROOT_DIR       worktree の配置先 (既定: .claude/worktrees) ※メイン worktree からの相対
@@ -54,8 +54,9 @@ base_ref() {
 # ---------------------------------------------------------------------------
 # .worktreeinclude 展開
 #
-# コピー対象 = 「gitignore 済みの未追跡ファイル」∩「.worktreeinclude のパターン」
-# (Claude Code Desktop の仕様に合わせた AND 条件)
+# コピー対象 = 「.worktreeinclude のパターンに一致する未追跡ファイル」
+# gitignore 済みかどうかは問わない (書いたのにコピーされない、を避けるため)。
+# 追跡済みファイルは worktree のチェックアウトに含まれるので対象外。
 # パターン解釈は一時リポジトリの .gitignore として git 本体に委譲する。
 # ---------------------------------------------------------------------------
 
@@ -64,6 +65,12 @@ copy_one() {
   local src=$1 dst=$2
   mkdir -p "$(dirname "$dst")"
   cp -c "$src" "$dst" 2>/dev/null || cp "$src" "$dst"
+}
+
+# 標準入力のパスのうち .worktreeinclude のパターンに一致するものだけを出力する
+# $1 = .worktreeinclude を .gitignore として持つ一時リポジトリ
+match_include() {
+  git -C "$1" -c core.excludesFile=/dev/null check-ignore --stdin 2>/dev/null || true
 }
 
 expand_include() {
@@ -75,6 +82,10 @@ expand_include() {
   tmp=$(mktemp -d) || die "mktemp に失敗しました"
   git init -q "$tmp"
   cp "$include_file" "$tmp/.gitignore"
+  # 判定に使うのは .worktreeinclude だけ。init テンプレート由来の除外設定は消し、
+  # ユーザのグローバル gitignore は core.excludesFile で無効化する
+  # (これをしないと .worktreeinclude に書いていないファイルまでコピーされる)
+  : > "$tmp/.git/info/exclude"
 
   local copied=0 rel
   while IFS= read -r rel; do
@@ -83,11 +94,13 @@ expand_include() {
     copy_one "$main/$rel" "$dest/$rel"
     copied=$((copied + 1))
   done < <(
-    git -C "$main" ls-files --others --ignored --exclude-standard \
-      | git -C "$tmp" check-ignore --stdin 2>/dev/null || true
+    # --exclude-standard を付けないので gitignore 済みの未追跡ファイルも列挙される
+    git -C "$main" ls-files --others \
+      | match_include "$tmp"
   )
   rm -rf "$tmp"
-  err ".worktreeinclude: ${copied} 個のファイルをコピーしました"
+  [ "$copied" -gt 0 ] && err ".worktreeinclude: ${copied} 個のファイルをコピーしました"
+  return 0
 }
 
 # ---------------------------------------------------------------------------
@@ -205,6 +218,8 @@ cmd_resolve() {
   main=$(main_worktree)
   path=$(wt_path_of "$main" "$name")
   if [ -n "$path" ]; then
+    # 既存 worktree にも未コピー分を反映する (既存ファイルは上書きしないので冪等)
+    expand_include "$main" "$path"
     printf '%s\n' "$path"
   else
     wt_create "$main" "$name"

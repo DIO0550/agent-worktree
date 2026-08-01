@@ -13,7 +13,7 @@ wt: /path/to/repo/.gemini/worktree/AA で agy を起動します
 
 - `codex -w <name>` / `agy -w <name>` で worktree を自動作成してその中で起動
 - `codex -w` (名前省略) で矢印キーのセレクタを表示。既存 worktree の選択と新規作成の両方に対応
-- `.worktreeinclude` を Claude Code Desktop と同じ AND 条件 (パターン一致 かつ gitignore 済み) で展開。パターン解釈は git 本体に委譲
+- `.worktreeinclude` に書いたファイルを worktree へコピー。パターン解釈は git 本体に委譲するので記法は `.gitignore` と同じ
 - エージェント終了時に worktree を「残す / 削除」から選択 (Claude Code の終了時プロンプト相当)。`WT_ON_EXIT` で常に残す・常に削除にも変更可
 - 配置先はエージェントごとに自動で切り替え (`agy` → `.gemini/worktree/<name>`, `codex` → `.codex/worktree/<name>`, その他 → `.<コマンド名>/worktree/<name>`)。ブランチ名 `worktree-<name>`・分岐元 `origin/HEAD` は Claude Code のネイティブ挙動に合わせたデフォルト
 - 依存は git と bash のみ。fzf などの外部ツールは不要
@@ -87,7 +87,7 @@ wt include <path>     # 既存 worktree へ .worktreeinclude を手動展開
 
 ## .worktreeinclude
 
-プロジェクトルートに置くと、worktree 新規作成時に gitignore 済みファイルをコピーします。記法は `.gitignore` と同じです (`.worktreeinclude.example` 参照)。
+プロジェクトルートに置くと、worktree に入るときに、ここへ書いたファイルをコピーします。記法は `.gitignore` と同じです (`.worktreeinclude.example` 参照)。
 
 ```
 .env
@@ -95,7 +95,11 @@ wt include <path>     # 既存 worktree へ .worktreeinclude を手動展開
 **/.claude/settings.local.json
 ```
 
-コピーされるのは「パターンに一致し、かつ gitignore 済みの未追跡ファイル」のみです。既存ファイルは上書きしません。macOS (APFS) では clonefile によるコピーを試み、`node_modules` のような大きなディレクトリも高速に複製できます。
+コピーされるのは「パターンに一致する未追跡ファイル」です。`.gitignore` に書いてあるかどうかは問いません (追跡済みのファイルは worktree のチェックアウトに含まれるので対象外)。
+
+コピーは worktree の新規作成時だけでなく、既存の worktree に入るときにも行われます。既存ファイルは上書きしないので、`.worktreeinclude` に後から項目を追加しても次回そのまま反映されます。手動で反映したい場合は `wt include <path>` を使います。
+
+macOS (APFS) では clonefile によるコピーを試み、`node_modules` のような大きなディレクトリも高速に複製できます。
 
 ## 設定
 
