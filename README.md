@@ -14,7 +14,7 @@ wt: /path/to/repo/.gemini/worktree/AA で agy を起動します
 - `codex -w <name>` / `agy -w <name>` で worktree を自動作成してその中で起動
 - `codex -w` (名前省略) で矢印キーのセレクタを表示。既存 worktree の選択と新規作成の両方に対応
 - `.worktreeinclude` を Claude Code Desktop と同じ AND 条件 (パターン一致 かつ gitignore 済み) で展開。パターン解釈は git 本体に委譲
-- エージェント終了時に worktree を「残す / 削除」から選択 (Claude Code の終了時プロンプト相当)。`WT_ON_EXIT` で常に残す・常に削除にも変更可
+- エージェント終了時に worktree を「残す / 削除」から矢印キーで選択 (Claude Code の終了時プロンプト相当)。未コミットの変更があっても削除できる。`WT_ON_EXIT` で常に残す・常に削除にも変更可
 - 配置先はエージェントごとに自動で切り替え (`agy` → `.gemini/worktree/<name>`, `codex` → `.codex/worktree/<name>`, その他 → `.<コマンド名>/worktree/<name>`)。ブランチ名 `worktree-<name>`・分岐元 `origin/HEAD` は Claude Code のネイティブ挙動に合わせたデフォルト
 - 依存は git と bash のみ。fzf などの外部ツールは不要
 
@@ -74,6 +74,14 @@ agy -w AA --model x   # -w AA 以外の引数はそのまま agy へ渡る
 agy                   # フラグ無しなら通常どおり起動
 ```
 
+エージェントを終了すると、worktree をどうするかを矢印キーで選べます (`WT_ON_EXIT=ask` のとき)。
+
+```console
+worktree "AA" をどうしますか？ (↑↓: 移動, Enter: 決定, q: 残す)
+ > 残す
+   削除 (未コミットの変更 3 件を破棄)
+```
+
 コアの `wt` コマンドは単体でも使えます。
 
 ```bash
@@ -82,8 +90,14 @@ wt create AA          # 新規作成
 wt select             # セレクタでパスを1つ出力
 wt list               # worktree 一覧
 wt remove AA          # worktree とブランチを削除 (未マージなら残す)
+wt remove -f AA       # 未コミットの変更ごと削除
+wt cleanup AA         # 「残す / 削除」をセレクタで選んで後始末
 wt include <path>     # 既存 worktree へ .worktreeinclude を手動展開
 ```
+
+`wt remove` は未コミットの変更 (未追跡ファイル含む) があると削除せずに終了します。エージェントが作業したあとの worktree はたいてい変更が残っているため、破棄してよい場合は `-f` を付けてください。
+
+コミット済みの内容は `-f` でも失われません。worktree は消えますが、未マージのブランチ (`worktree-AA`) はそのまま残るので、不要なら `git branch -D worktree-AA` で削除します。
 
 ## .worktreeinclude
 
@@ -108,7 +122,7 @@ wt include <path>     # 既存 worktree へ .worktreeinclude を手動展開
 | `WT_ROOT_DIR_<CMD>` | 未設定 | コマンド別の配置先上書き (例: `WT_ROOT_DIR_CODEX=.mycodex/wt`)。コマンド名は大文字化し `-` は `_` に置換 |
 | `WT_BRANCH_PREFIX` | `worktree-` | ブランチ名の接頭辞 |
 | `WT_BASE_REF` | `origin/HEAD` (無ければ `HEAD`) | 分岐元 |
-| `WT_ON_EXIT` | `ask` | エージェント終了時の worktree の扱い。`ask`: 残すか削除するかを選択 / `keep`: 常に残す / `remove`: 常に削除 |
+| `WT_ON_EXIT` | `ask` | エージェント終了時の worktree の扱い。`ask`: 残す/削除を矢印キーのセレクタで選択 / `keep`: 常に残す / `remove`: 常に削除。削除する場合は未コミットの変更ごと削除します |
 
 配置先の既定値はラップするコマンドごとに異なります。優先順位は `WT_ROOT_DIR_<CMD>` > `WT_ROOT_DIR` > 既定値です。
 

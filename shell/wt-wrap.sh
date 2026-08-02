@@ -13,7 +13,8 @@
 #   WT_ROOT_DIR        worktree 配置先の全コマンド共通の上書き
 #   WT_ROOT_DIR_<CMD>  コマンド別の配置先上書き (例: WT_ROOT_DIR_CODEX)
 #   WT_ON_EXIT         エージェント終了時の worktree の扱い
-#                      ask (既定): 残すか削除するかを選択 / keep: 常に残す / remove: 常に削除
+#                      ask (既定): 残す/削除をセレクタで選択 / keep: 常に残す / remove: 常に削除
+#                      削除する場合は未コミットの変更ごと削除する
 #
 # 配置先の既定値はコマンドごとに異なる:
 #   agy   → .gemini/worktree
@@ -99,30 +100,28 @@ _wt_run() {
 
 # エージェント終了後の worktree の後始末 (Claude Code の終了時プロンプト相当)
 # $1=WT_ROOT_DIR, $2=worktree パス
+#
+# エージェントは worktree の中で作業するので終了時はほぼ必ず未コミットの
+# 変更が残る。素の `git worktree remove` はそれを理由に失敗するため、
+# 「削除」を選んだときは変更ごと消す (= --force) 前提で扱う。
 _wt_on_exit() {
   local wt_root=$1 wt_dir=$2
-  local name=${wt_dir##*/} ans
+  local name=${wt_dir##*/}
   [ -d "$wt_dir" ] || return 0
 
   case "${WT_ON_EXIT:-ask}" in
     keep) return 0 ;;
     remove)
-      WT_ROOT_DIR="$wt_root" "$_WT_BIN" remove "$name" \
+      WT_ROOT_DIR="$wt_root" "$_WT_BIN" remove --force "$name" \
         || printf 'wt: 削除に失敗したため worktree を残しました: %s\n' "$wt_dir" >&2
       return 0
       ;;
   esac
 
-  # 対話できない環境 (制御端末なし) では何もせず残す
-  { : </dev/tty >/dev/tty; } 2>/dev/null || return 0
-  printf 'wt: worktree "%s" を残しますか？ [Y=残す / d=削除] ' "$name" >/dev/tty
-  IFS= read -r ans </dev/tty || return 0
-  case "$ans" in
-    d|D)
-      WT_ROOT_DIR="$wt_root" "$_WT_BIN" remove "$name" \
-        || printf 'wt: 削除に失敗したため worktree を残しました: %s\n' "$wt_dir" >&2
-      ;;
-  esac
+  # 「残す / 削除」のセレクタ表示と削除は wt 側に任せる
+  # (対話できない環境ではそのまま残る)
+  WT_ROOT_DIR="$wt_root" "$_WT_BIN" cleanup "$name" \
+    || printf 'wt: 削除に失敗したため worktree を残しました: %s\n' "$wt_dir" >&2
 }
 
 # WT_WRAP_COMMANDS の各コマンドに対して同名のシェル関数を生成
