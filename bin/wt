@@ -5,12 +5,13 @@
 # worktree 解決・作成・選択・.worktreeinclude 展開を担う。
 #
 # サブコマンド:
-#   wt resolve <name>   worktree のパスを出力 (無ければ作成)
-#   wt create  <name>   worktree を新規作成してパスを出力
-#   wt select           矢印キーのセレクタでパスを1つ出力 (新規作成も可)
-#   wt list             worktree 一覧を表示
-#   wt remove <name>    worktree とブランチを削除
-#   wt include <path>   指定 worktree へ .worktreeinclude を手動展開
+#   wt resolve <name>      worktree のパスを出力 (無ければ作成)
+#   wt create  <name>      worktree を新規作成してパスを出力
+#   wt select              矢印キーのセレクタでパスを1つ出力 (新規作成も可)
+#   wt list                worktree 一覧を表示
+#   wt remove [-f] <name>  worktree とブランチを削除 (-f: 未コミットの変更ごと削除)
+#   wt cleanup <name>      「残す / 削除」を矢印キーのセレクタで選んで後始末
+#   wt include <path>      指定 worktree へ .worktreeinclude を手動展開
 #
 # 環境変数:
 #   WT_ROOT_DIR       worktree の配置先 (既定: .claude/worktrees) ※メイン worktree からの相対
@@ -134,26 +135,61 @@ wt_list_names() {
       done
 }
 
+wt_dirty_count() {
+  # 未コミット (変更 + 未追跡) のファイル数。git worktree remove が拒否する条件と同じ
+  git -C "$1" status --porcelain 2>/dev/null | awk 'END{print NR}'
+}
+
+# worktree とブランチを削除する
+# $1=メイン worktree, $2=名前, $3=worktree のパス, $4=force (1 なら未コミットの変更ごと削除)
+#
+# ブランチは未マージなら force でも残す。worktree の中身は使い捨てでも
+# コミット済みの成果まで消えると復旧できないため。
+wt_remove() {
+  local main=$1 name=$2 path=$3 force=$4
+  local branch="${WT_BRANCH_PREFIX}${name}"
+
+  if [ "$force" -eq 1 ]; then
+    git -C "$main" worktree remove --force "$path" >&2 || return 1
+  else
+    git -C "$main" worktree remove "$path" >&2 || return 1
+  fi
+  err "worktree を削除しました: $path"
+
+  git -C "$main" show-ref -q --verify "refs/heads/$branch" || return 0
+  if git -C "$main" branch -d "$branch" >/dev/null 2>&1; then
+    err "ブランチ $branch を削除しました"
+  else
+    err "ブランチ $branch は未マージのため残しました (git branch -D $branch で削除できます)"
+  fi
+}
+
 # ---------------------------------------------------------------------------
 # セレクタ UI (fzf 不使用 / ANSI エスケープ / /dev/tty で対話)
-# 選択結果のみ標準出力に返す
+#
+# choose <見出し> <選択肢...>
+#   矢印キー (または j/k) で選ばせ、選んだ添字を _WT_CHOICE に入れる。
+#   中止 (q / ESC) なら 1 を返す。描画・入力は /dev/tty なので標準出力を汚さない。
 # ---------------------------------------------------------------------------
 
-selector() {
-  local main=$1
-  local -a items=()
-  local name
-  while IFS= read -r name; do items+=("$name"); done < <(wt_list_names "$main")
-  items+=("+ 新規作成")
+_WT_CHOICE=0
 
+has_tty() { { : </dev/tty >/dev/tty; } 2>/dev/null; }
+
+choose() {
+  local header=$1; shift
+  local -a items=("$@")
   local count=${#items[@]} cur=0 i key rest
 
+  [ "$count" -gt 0 ] || return 1
+  has_tty || { err "対話端末が無いため選択できません"; return 1; }
+
   exec 3</dev/tty 4>/dev/tty
-  printf 'worktree を選択 (↑↓: 移動, Enter: 決定, q: 中止)\n' >&4
+  printf '%s\n' "$header" >&4
   # 初回描画分の行を確保
   for ((i = 0; i < count; i++)); do printf '\n' >&4; done
 
-  draw() {
+  while :; do
     printf '\033[%dA' "$count" >&4
     for ((i = 0; i < count; i++)); do
       if [ "$i" -eq "$cur" ]; then
@@ -162,10 +198,7 @@ selector() {
         printf '\033[2K   %s\n' "${items[i]}" >&4
       fi
     done
-  }
 
-  while :; do
-    draw
     IFS= read -rsn1 key <&3 || key=q
     if [ "$key" = $'\x1b' ]; then
       IFS= read -rsn2 -t 0.05 rest <&3 || rest=''
@@ -183,15 +216,26 @@ selector() {
     fi
   done
 
-  local choice="${items[cur]}"
+  exec 3<&- 4>&-
+  _WT_CHOICE=$cur
+}
+
+selector() {
+  local main=$1
+  local -a items=()
+  local name
+  while IFS= read -r name; do items+=("$name"); done < <(wt_list_names "$main")
+  items+=("+ 新規作成")
+
+  choose 'worktree を選択 (↑↓: 移動, Enter: 決定, q: 中止)' "${items[@]}" || return 1
+
+  local choice="${items[$_WT_CHOICE]}"
   if [ "$choice" = "+ 新規作成" ]; then
-    printf 'worktree 名: ' >&4
-    IFS= read -r name <&3
-    exec 3<&- 4>&-
+    printf 'worktree 名: ' >/dev/tty
+    IFS= read -r name </dev/tty || return 1
     [ -n "$name" ] || return 1
     cmd_resolve "$name"
   else
-    exec 3<&- 4>&-
     printf '%s\n' "$main/$WT_ROOT_DIR/$choice"
   fi
 }
@@ -226,13 +270,50 @@ cmd_list() {
 }
 
 cmd_remove() {
-  local name=$1 main path
+  local force=0 name='' arg main path
+  for arg in "$@"; do
+    case "$arg" in
+      -f|--force) force=1 ;;
+      -*) die "不明なオプション: $arg" ;;
+      *)
+        [ -z "$name" ] || die "使い方: wt remove [-f|--force] <name>"
+        name=$arg
+        ;;
+    esac
+  done
+  [ -n "$name" ] || die "使い方: wt remove [-f|--force] <name>"
+
   main=$(main_worktree)
   path=$(wt_path_of "$main" "$name")
   [ -n "$path" ] || die "worktree が見つかりません: $name"
-  git -C "$main" worktree remove "$path"
-  git -C "$main" branch -d "${WT_BRANCH_PREFIX}${name}" 2>/dev/null \
-    || err "ブランチ ${WT_BRANCH_PREFIX}${name} は未マージのため残しました (-D で手動削除してください)"
+
+  if [ "$force" -eq 0 ] && [ "$(wt_dirty_count "$path")" -gt 0 ]; then
+    die "未コミットの変更があるため削除しませんでした: $path (破棄してよければ wt remove -f $name)"
+  fi
+  wt_remove "$main" "$name" "$path" "$force" || die "worktree の削除に失敗しました: $path"
+}
+
+# エージェント終了後の後始末。「残す / 削除」をセレクタで選ばせる。
+# 未コミットの変更があれば件数を見せたうえで、削除を選んだときだけ強制削除する。
+cmd_cleanup() {
+  local name=$1 main path dirty remove_label='削除'
+  main=$(main_worktree)
+  path=$(wt_path_of "$main" "$name")
+  [ -n "$path" ] || return 0            # 既に無ければ何もしない
+
+  # 対話できない環境 (制御端末なし) では残す
+  has_tty || return 0
+
+  dirty=$(wt_dirty_count "$path")
+  if [ "$dirty" -gt 0 ]; then
+    remove_label="削除 (未コミットの変更 ${dirty} 件を破棄)"
+  fi
+
+  choose "worktree \"$name\" をどうしますか？ (↑↓: 移動, Enter: 決定, q: 残す)" \
+    '残す' "$remove_label" || return 0
+  [ "$_WT_CHOICE" -eq 1 ] || return 0
+
+  wt_remove "$main" "$name" "$path" 1 || die "worktree の削除に失敗しました: $path"
 }
 
 cmd_include() {
@@ -241,7 +322,8 @@ cmd_include() {
 }
 
 usage() {
-  sed -n '2,20p' "$0" | sed 's/^# \{0,1\}//'
+  # 先頭のコメントブロック (2行目〜最初の非コメント行の手前) をそのままヘルプにする
+  awk 'NR == 1 { next } /^#/ { sub(/^# ?/, ""); print; next } { exit }' "$0"
 }
 
 main() {
@@ -253,7 +335,8 @@ main() {
     create)  [ $# -eq 1 ] || die "使い方: wt create <name>";  cmd_create "$1" ;;
     select)  cmd_select ;;
     list)    cmd_list ;;
-    remove)  [ $# -eq 1 ] || die "使い方: wt remove <name>";  cmd_remove "$1" ;;
+    remove)  cmd_remove "$@" ;;
+    cleanup) [ $# -eq 1 ] || die "使い方: wt cleanup <name>"; cmd_cleanup "$1" ;;
     include) [ $# -eq 1 ] || die "使い方: wt include <path>"; cmd_include "$1" ;;
     ""|-h|--help) usage ;;
     *) die "不明なサブコマンド: $cmd" ;;
