@@ -17,6 +17,9 @@
 #   WT_ROOT_DIR       worktree の配置先 (既定: .claude/worktrees) ※メイン worktree からの相対
 #   WT_BRANCH_PREFIX  ブランチ名の接頭辞 (既定: worktree-)
 #   WT_BASE_REF       分岐元 (既定: origin/HEAD → 無ければ HEAD)
+#   WT_INCLUDE_AGENT_ASSETS
+#                     gitignore 済みのスキル / カスタムコマンドを既定でコピーするか
+#                     (既定: 1 / 0 で無効)
 set -euo pipefail
 
 WT_ROOT_DIR="${WT_ROOT_DIR:-.claude/worktrees}"
@@ -55,10 +58,47 @@ base_ref() {
 # ---------------------------------------------------------------------------
 # .worktreeinclude 展開
 #
-# コピー対象 = 「gitignore 済みの未追跡ファイル」∩「.worktreeinclude のパターン」
+# コピー対象 = 「gitignore 済みの未追跡ファイル」∩「パターン」
 # (Claude Code Desktop の仕様に合わせた AND 条件)
-# パターン解釈は一時リポジトリの .gitignore として git 本体に委譲する。
+# パターンは組み込みのエージェント資産 + .worktreeinclude で、
+# 解釈は一時リポジトリの .gitignore として git 本体に委譲する。
 # ---------------------------------------------------------------------------
+
+# エージェントのスキル / カスタムコマンドの置き場。
+#
+# git worktree には git 管理下のファイルしか入らない。これらは gitignore して
+# いることが多く、そのままだと新しい worktree に存在せず `/` メニューに
+# プロジェクトのスキルが1つも出てこないため既定でコピーする。
+# git 管理下に置いているならそもそも worktree に入るので、この一覧は素通りする。
+agent_asset_patterns() {
+  case "${WT_INCLUDE_AGENT_ASSETS:-1}" in
+    0|no|false) return 0 ;;
+  esac
+  cat <<'EOF'
+.agents/skills/**
+.agents/commands/**
+.agent/skills/**
+.gemini/skills/**
+.gemini/commands/**
+.claude/skills/**
+.claude/commands/**
+.claude/agents/**
+.codex/prompts/**
+EOF
+}
+
+# 組み込みパターンが触りうるトップレベルのディレクトリ。
+# .worktreeinclude が無いときの列挙範囲を絞り、node_modules のような
+# 巨大な gitignore 済みツリーを毎回舐めないようにするために使う。
+agent_asset_dirs() {
+  cat <<'EOF'
+.agents
+.agent
+.gemini
+.claude
+.codex
+EOF
+}
 
 copy_one() {
   # clonefile (APFS) が使えれば実体共有コピー、ダメなら通常コピー
@@ -67,28 +107,72 @@ copy_one() {
   cp -c "$src" "$dst" 2>/dev/null || cp "$src" "$dst"
 }
 
+# シンボリックリンク (gemini skills link などが張る) はリンクのまま複製する。
+# 相対リンクは worktree からだと指す先がずれるので絶対パスに直す。
+copy_link() {
+  local src=$1 dst=$2 target
+  target=$(readlink "$src") || return 1
+  case "$target" in
+    /*) ;;
+    *)  target="$(cd "$(dirname "$src")" && pwd)/$target" ;;
+  esac
+  mkdir -p "$(dirname "$dst")"
+  ln -s "$target" "$dst"
+}
+
 expand_include() {
   local main=$1 dest=$2
   local include_file="$main/.worktreeinclude"
-  [ -f "$include_file" ] || return 0
 
   local tmp
   tmp=$(mktemp -d) || die "mktemp に失敗しました"
   git init -q "$tmp"
-  cp "$include_file" "$tmp/.gitignore"
+  agent_asset_patterns > "$tmp/.gitignore"
+  [ -f "$include_file" ] && cat "$include_file" >> "$tmp/.gitignore"
+
+  if [ ! -s "$tmp/.gitignore" ]; then     # 組み込み無効 かつ .worktreeinclude 無し
+    rm -rf "$tmp"
+    return 0
+  fi
+
+  # .worktreeinclude が無ければ組み込みパターンしか無いので列挙範囲を絞れる
+  local -a scope=()
+  local dir
+  if [ ! -f "$include_file" ]; then
+    while IFS= read -r dir; do
+      [ -d "$main/$dir" ] && scope+=("$dir")
+    done < <(agent_asset_dirs)
+    if [ "${#scope[@]}" -eq 0 ]; then
+      rm -rf "$tmp"
+      return 0
+    fi
+  fi
 
   local copied=0 rel
   while IFS= read -r rel; do
-    [ -f "$main/$rel" ] || continue          # ディレクトリ項目はファイル単位で列挙済み
-    [ -e "$dest/$rel" ] && continue          # 既存ファイルは上書きしない
-    copy_one "$main/$rel" "$dest/$rel"
+    # 既存は上書きしない (壊れたリンクも「在る」と見なすので -L も見る)
+    if [ -e "$dest/$rel" ] || [ -L "$dest/$rel" ]; then
+      continue
+    fi
+    if [ -L "$main/$rel" ]; then
+      copy_link "$main/$rel" "$dest/$rel"
+    elif [ -f "$main/$rel" ]; then
+      copy_one "$main/$rel" "$dest/$rel"
+    else
+      continue                             # ディレクトリ項目はファイル単位で列挙済み
+    fi
     copied=$((copied + 1))
   done < <(
-    git -C "$main" ls-files --others --ignored --exclude-standard \
-      | git -C "$tmp" check-ignore --stdin 2>/dev/null || true
+    if [ "${#scope[@]}" -gt 0 ]; then
+      git -C "$main" ls-files --others --ignored --exclude-standard -- "${scope[@]}"
+    else
+      git -C "$main" ls-files --others --ignored --exclude-standard
+    fi | git -C "$tmp" check-ignore --stdin 2>/dev/null || true
   )
   rm -rf "$tmp"
-  err ".worktreeinclude: ${copied} 個のファイルをコピーしました"
+  if [ "$copied" -gt 0 ] || [ -f "$include_file" ]; then
+    err "worktree へ ${copied} 個のファイルをコピーしました"
+  fi
 }
 
 # ---------------------------------------------------------------------------

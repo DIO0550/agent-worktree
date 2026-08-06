@@ -4,7 +4,14 @@
 # 記法は .gitignore と同じ。ただしコピーされるのは
 # 「このパターンに一致し、かつ gitignore 済みの未追跡ファイル」のみ。
 # (git 管理下のファイルは worktree に元から入るため対象外)
+#
+# スキル / カスタムコマンドの置き場 (.gemini/skills, .agents/skills,
+# .gemini/commands, .claude/skills, .codex/prompts など) は
+# ここに書かなくても既定でコピーされる。止めるなら WT_INCLUDE_AGENT_ASSETS=0。
 
 .env
 .env.*
 **/.claude/settings.local.json
+
+# 拡張機能ごとスキルを持ち込みたい場合の例
+# .gemini/extensions/**

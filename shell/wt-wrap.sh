@@ -15,6 +15,9 @@
 #   WT_ON_EXIT         エージェント終了時の worktree の扱い
 #                      ask (既定): 残す/削除をセレクタで選択 / keep: 常に残す / remove: 常に削除
 #                      削除する場合は未コミットの変更ごと削除する
+#   WT_INCLUDE_AGENT_ASSETS
+#                      gitignore 済みのスキル / カスタムコマンドを新しい worktree へ
+#                      既定でコピーするか (既定: 1 / 0 で無効)
 #
 # 配置先の既定値はコマンドごとに異なる:
 #   agy   → .gemini/worktree
