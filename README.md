@@ -112,7 +112,7 @@ git worktree には **git 管理下のファイルしか入りません**。プ�
 | Claude Code | `.claude/skills/**`, `.claude/commands/**`, `.claude/agents/**` |
 | Codex | `.codex/prompts/**` |
 
-`gemini skills link` が張ったシンボリックリンクはリンクのまま複製します (相対リンクは絶対パスに直します)。スキルを git 管理下に置いている場合は worktree に元から入るので、この処理は何もしません。
+`gemini skills link` が張ったシンボリックリンクは実体をコピーします。Gemini CLI / Antigravity はスキルのシンボリックリンクを辿らないため ([gemini-cli#16247](https://github.com/google-gemini/gemini-cli/issues/16247), [vercel-labs/skills#633](https://github.com/vercel-labs/skills/issues/633))、リンクのまま複製しても認識されないからです。スキルを git 管理下に置いている場合は worktree に元から入るので、この処理は何もしません。
 
 コピーは新規作成時だけです。作成済みの worktree に後から反映するには `wt include <path>` を実行してください。既定のコピーを止めるには `WT_INCLUDE_AGENT_ASSETS=0` を設定します。
 
@@ -154,6 +154,26 @@ git worktree には **git 管理下のファイルしか入りません**。プ�
 | `wt` 単体 | `.claude/worktrees` |
 
 使用する配置先 (`.gemini/worktree/` など) は `.gitignore` に追加してください。
+
+## 既知の制限 (agy / Antigravity CLI)
+
+**agy は git worktree から起動するとプロジェクトをワークスペースとして認識しません** ([antigravity-cli#253](https://github.com/google-antigravity/antigravity-cli/issues/253), 未修正)。ワークスペースが scratch にフォールバックするため、`/` を押してもプロジェクトのスキルやカスタムコマンドが読み込まれません。agy 側の問題なので agent-worktree では回避できません。
+
+試す価値のある回避策:
+
+- 起動後に `/add-dir .` を実行する (`/add-dir` はスキルとスラッシュコマンドの再検出を伴う)
+- `agy --new-project <name>` で worktree をプロジェクトとして登録してから使う
+
+また **agy 1.1.0 未満は `.gemini/worktree/` のようなドット始まりディレクトリ配下でワークスペース初期化に失敗します**。既定の配置先を使うなら 1.1.0 以上が必要です。古いバージョンから動かせない場合は配置先をドット無しにしてください。
+
+```bash
+export WT_ROOT_DIR_AGY=worktrees
+```
+
+worktree 運用時に踏みやすい他の未修正バグ:
+
+- [antigravity-cli#388](https://github.com/google-antigravity/antigravity-cli/issues/388) 会話を削除すると worktree ごと削除される
+- [antigravity-cli#103](https://github.com/google-antigravity/antigravity-cli/issues/103) `~/.agents/skills` のユーザースキルが読み込まれない (`~/.gemini/antigravity-cli/skills/` などへ置くと読まれる)
 
 ## ライセンス
 

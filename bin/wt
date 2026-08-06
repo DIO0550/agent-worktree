@@ -107,17 +107,14 @@ copy_one() {
   cp -c "$src" "$dst" 2>/dev/null || cp "$src" "$dst"
 }
 
-# シンボリックリンク (gemini skills link などが張る) はリンクのまま複製する。
-# 相対リンクは worktree からだと指す先がずれるので絶対パスに直す。
-copy_link() {
-  local src=$1 dst=$2 target
-  target=$(readlink "$src") || return 1
-  case "$target" in
-    /*) ;;
-    *)  target="$(cd "$(dirname "$src")" && pwd)/$target" ;;
-  esac
+# シンボリックリンク (gemini skills link などが張る) は実体をコピーする。
+# Gemini CLI / Antigravity はスキルのシンボリックリンクを辿らないため
+# (gemini-cli#16247, vercel-labs/skills#633)、リンクのまま複製しても
+# worktree 側で認識されない。壊れたリンクは失敗させて呼び出し側で飛ばす。
+copy_deref() {
+  local src=$1 dst=$2
   mkdir -p "$(dirname "$dst")"
-  ln -s "$target" "$dst"
+  cp -RL "$src" "$dst" 2>/dev/null
 }
 
 expand_include() {
@@ -155,7 +152,8 @@ expand_include() {
       continue
     fi
     if [ -L "$main/$rel" ]; then
-      copy_link "$main/$rel" "$dest/$rel"
+      copy_deref "$main/$rel" "$dest/$rel" \
+        || { err "リンク先を辿れないため飛ばしました: $rel"; continue; }
     elif [ -f "$main/$rel" ]; then
       copy_one "$main/$rel" "$dest/$rel"
     else
@@ -171,7 +169,7 @@ expand_include() {
   )
   rm -rf "$tmp"
   if [ "$copied" -gt 0 ] || [ -f "$include_file" ]; then
-    err "worktree へ ${copied} 個のファイルをコピーしました"
+    err "worktree へ ${copied} 件コピーしました"
   fi
 }
 
