@@ -1,22 +1,21 @@
 # agent-worktree
 
-codex / agy などの CLI エージェントを、Claude Code の `--worktree` と同じ感覚で git worktree 内で起動するための bash ラッパーです。`.worktreeinclude` による gitignore 済みファイルのコピーにも対応しています。
+codex / agy / opencode / cursor-agent などの CLI エージェントを、Claude Code の `--worktree` と同じ感覚で git worktree 内で起動するための bash ラッパーです。`.worktreeinclude` による gitignore 済みファイルのコピーにも対応しています。
 
 ```console
 $ agy -w AA
 wt: origin/main から worktree-AA を作成します
-wt: worktree へ 5 個のファイルをコピーしました
+wt: .worktreeinclude: 2 件コピーしました
 wt: /path/to/repo/.gemini/worktree/AA で agy を起動します
 ```
 
 ## 特徴
 
-- `codex -w <name>` / `agy -w <name>` で worktree を自動作成してその中で起動
+- `codex -w <name>` / `agy -w <name>` / `opencode -w <name>` / `cursor-agent -w <name>` で worktree を自動作成してその中で起動
 - `codex -w` (名前省略) で矢印キーのセレクタを表示。既存 worktree の選択と新規作成の両方に対応
-- gitignore 済みのスキル / カスタムコマンド (`.gemini/skills` `.agents/skills` `.gemini/commands` など) を既定で worktree へコピー。worktree でも `/` にプロジェクトのスキルが出る
 - `.worktreeinclude` を Claude Code Desktop と同じ AND 条件 (パターン一致 かつ gitignore 済み) で展開。パターン解釈は git 本体に委譲
 - エージェント終了時に worktree を「残す / 削除」から矢印キーで選択 (Claude Code の終了時プロンプト相当)。未コミットの変更があっても削除できる。`WT_ON_EXIT` で常に残す・常に削除にも変更可
-- 配置先はエージェントごとに自動で切り替え (`agy` → `.gemini/worktree/<name>`, `codex` → `.codex/worktree/<name>`, その他 → `.<コマンド名>/worktree/<name>`)。ブランチ名 `worktree-<name>`・分岐元 `origin/HEAD` は Claude Code のネイティブ挙動に合わせたデフォルト
+- 配置先はエージェントごとに自動で切り替え (`agy` → `.gemini/worktree/<name>`, `cursor-agent` → `.cursor/worktree/<name>`, その他 → `.<コマンド名>/worktree/<name>`)。ブランチ名 `worktree-<name>`・分岐元 `origin/HEAD` は Claude Code のネイティブ挙動に合わせたデフォルト
 - 依存は git と bash のみ。fzf などの外部ツールは不要
 
 ## インストール
@@ -73,6 +72,9 @@ agy -w AA             # worktree "AA" を解決 (無ければ作成) して agy 
 agy -w                # セレクタで選択 (「+ 新規作成」も選べる)
 agy -w AA --model x   # -w AA 以外の引数はそのまま agy へ渡る
 agy                   # フラグ無しなら通常どおり起動
+
+opencode -w AA        # 同じ要領で opencode / cursor-agent も使える
+cursor-agent -w AA
 ```
 
 エージェントを終了すると、worktree をどうするかを矢印キーで選べます (`WT_ON_EXIT=ask` のとき)。
@@ -100,24 +102,6 @@ wt include <path>     # 既存 worktree へ .worktreeinclude を手動展開
 
 コミット済みの内容は `-f` でも失われません。worktree は消えますが、未マージのブランチ (`worktree-AA`) はそのまま残るので、不要なら `git branch -D worktree-AA` で削除します。
 
-## スキル / カスタムコマンドの引き継ぎ
-
-git worktree には **git 管理下のファイルしか入りません**。プロジェクトのスキルを `.gemini/skills/` などに置いたまま `.gitignore` していると、worktree 側にはそれが存在せず `/` を押してもユーザースコープ (`~/.gemini/skills`) のものしか出てきません。
-
-そのため worktree の新規作成時に、下記のディレクトリにある gitignore 済みファイルを既定でコピーします。
-
-| エージェント | コピー対象 |
-|---|---|
-| Antigravity (`agy`) / Gemini CLI | `.agents/skills/**`, `.agents/commands/**`, `.agent/skills/**`, `.gemini/skills/**`, `.gemini/commands/**` |
-| Claude Code | `.claude/skills/**`, `.claude/commands/**`, `.claude/agents/**` |
-| Codex | `.codex/prompts/**` |
-
-`gemini skills link` が張ったシンボリックリンクは実体をコピーします。Gemini CLI / Antigravity はスキルのシンボリックリンクを辿らないため ([gemini-cli#16247](https://github.com/google-gemini/gemini-cli/issues/16247), [vercel-labs/skills#633](https://github.com/vercel-labs/skills/issues/633))、リンクのまま複製しても認識されないからです。スキルを git 管理下に置いている場合は worktree に元から入るので、この処理は何もしません。
-
-コピーは新規作成時だけです。作成済みの worktree に後から反映するには `wt include <path>` を実行してください。既定のコピーを止めるには `WT_INCLUDE_AGENT_ASSETS=0` を設定します。
-
-上記以外 (`.gemini/extensions/` など) を持ち込みたい場合は `.worktreeinclude` に追記してください。
-
 ## .worktreeinclude
 
 プロジェクトルートに置くと、worktree 新規作成時に gitignore 済みファイルをコピーします。記法は `.gitignore` と同じです (`.worktreeinclude.example` 参照)。
@@ -130,28 +114,52 @@ git worktree には **git 管理下のファイルしか入りません**。プ�
 
 コピーされるのは「パターンに一致し、かつ gitignore 済みの未追跡ファイル」のみです。既存ファイルは上書きしません。macOS (APFS) では clonefile によるコピーを試み、`node_modules` のような大きなディレクトリも高速に複製できます。
 
+シンボリックリンク (`gemini skills link` などが張るもの) は実体をコピーします。エージェント側がスキルのシンボリックリンクを辿らないことがあり ([gemini-cli#16247](https://github.com/google-gemini/gemini-cli/issues/16247), [vercel-labs/skills#633](https://github.com/vercel-labs/skills/issues/633))、リンクのまま複製しても認識されないためです。
+
+### スキル / カスタムコマンドを持ち込む
+
+git worktree には **git 管理下のファイルしか入りません**。スキルを `.gitignore` している場合、worktree 側には存在せず `/` を押してもプロジェクトのスキルが出てきません。持ち込むには `.worktreeinclude` に書きます。
+
+```
+.agents/skills/**
+.gemini/skills/**
+.gemini/commands/**
+.opencode/skills/**
+.opencode/commands/**
+.cursor/commands/**
+.cursor/rules/**
+.claude/skills/**
+.claude/commands/**
+.codex/prompts/**
+```
+
+git 管理下に置いているスキルは worktree に元から入るので、書く必要はありません。作成済みの worktree へ後から反映するには `wt include <path>` を使います。
+
 ## 設定
 
 環境変数で挙動を変更できます。
 
 | 変数 | 既定値 | 説明 |
 |---|---|---|
-| `WT_WRAP_COMMANDS` | `codex agy` | ラップするコマンド (空白区切り) |
+| `WT_WRAP_COMMANDS` | `codex agy opencode cursor-agent` | ラップするコマンド (空白区切り) |
 | `WT_ROOT_DIR` | コマンド別 (下表参照) | worktree の配置先 (メイン worktree 相対) の全コマンド共通の上書き |
 | `WT_ROOT_DIR_<CMD>` | 未設定 | コマンド別の配置先上書き (例: `WT_ROOT_DIR_CODEX=.mycodex/wt`)。コマンド名は大文字化し `-` は `_` に置換 |
 | `WT_BRANCH_PREFIX` | `worktree-` | ブランチ名の接頭辞 |
 | `WT_BASE_REF` | `origin/HEAD` (無ければ `HEAD`) | 分岐元 |
-| `WT_INCLUDE_AGENT_ASSETS` | `1` | gitignore 済みのスキル / カスタムコマンドを worktree へコピーするか (`0` で無効) |
 | `WT_ON_EXIT` | `ask` | エージェント終了時の worktree の扱い。`ask`: 残す/削除を矢印キーのセレクタで選択 / `keep`: 常に残す / `remove`: 常に削除。削除する場合は未コミットの変更ごと削除します |
 
 配置先の既定値はラップするコマンドごとに異なります。優先順位は `WT_ROOT_DIR_<CMD>` > `WT_ROOT_DIR` > 既定値です。
 
 | コマンド | 既定の配置先 |
 |---|---|
-| `agy` (antigravity) | `.gemini/worktree` |
+| `agy` (Antigravity CLI) | `.gemini/worktree` |
+| `cursor-agent` (Cursor CLI) | `.cursor/worktree` |
 | `codex` | `.codex/worktree` |
+| `opencode` | `.opencode/worktree` |
 | その他のラップコマンド | `.<コマンド名>/worktree` |
 | `wt` 単体 | `.claude/worktrees` |
+
+`agy` と `cursor-agent` はコマンド名と設定ディレクトリ名が違うため個別に対応しています。それ以外は `.<コマンド名>/worktree` の規則で解決するので、`WT_WRAP_COMMANDS` に足すだけで使えます。
 
 使用する配置先 (`.gemini/worktree/` など) は `.gitignore` に追加してください。
 

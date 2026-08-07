@@ -9,22 +9,21 @@
 #   codex (フラグ無し)    → 通常どおり起動
 #
 # 環境変数:
-#   WT_WRAP_COMMANDS   ラップするコマンド (空白区切り, 既定: "codex agy")
+#   WT_WRAP_COMMANDS   ラップするコマンド (空白区切り, 既定: "codex agy opencode cursor-agent")
 #   WT_ROOT_DIR        worktree 配置先の全コマンド共通の上書き
 #   WT_ROOT_DIR_<CMD>  コマンド別の配置先上書き (例: WT_ROOT_DIR_CODEX)
 #   WT_ON_EXIT         エージェント終了時の worktree の扱い
 #                      ask (既定): 残す/削除をセレクタで選択 / keep: 常に残す / remove: 常に削除
 #                      削除する場合は未コミットの変更ごと削除する
-#   WT_INCLUDE_AGENT_ASSETS
-#                      gitignore 済みのスキル / カスタムコマンドを新しい worktree へ
-#                      既定でコピーするか (既定: 1 / 0 で無効)
 #
 # 配置先の既定値はコマンドごとに異なる:
-#   agy   → .gemini/worktree
-#   codex → .codex/worktree
-#   それ以外 → .<コマンド名>/worktree
+#   agy          → .gemini/worktree
+#   cursor-agent → .cursor/worktree
+#   codex        → .codex/worktree
+#   opencode     → .opencode/worktree
+#   それ以外      → .<コマンド名>/worktree
 
-: "${WT_WRAP_COMMANDS:=codex agy}"
+: "${WT_WRAP_COMMANDS:=codex agy opencode cursor-agent}"
 
 # このファイル自身の場所から bin/wt を特定
 if [ -n "${BASH_SOURCE:-}" ]; then
@@ -45,9 +44,11 @@ _wt_root_dir_for() {
   elif [ -n "${WT_ROOT_DIR:-}" ]; then
     printf '%s\n' "$WT_ROOT_DIR"
   else
+    # 設定ディレクトリ名がコマンド名と一致しないものだけ個別に持つ
     case "$cmd" in
-      agy) printf '.gemini/worktree\n' ;;
-      *)   printf '.%s/worktree\n' "$cmd" ;;
+      agy)          printf '.gemini/worktree\n' ;;
+      cursor-agent) printf '.cursor/worktree\n' ;;
+      *)            printf '.%s/worktree\n' "$cmd" ;;
     esac
   fi
 }

@@ -17,9 +17,6 @@
 #   WT_ROOT_DIR       worktree の配置先 (既定: .claude/worktrees) ※メイン worktree からの相対
 #   WT_BRANCH_PREFIX  ブランチ名の接頭辞 (既定: worktree-)
 #   WT_BASE_REF       分岐元 (既定: origin/HEAD → 無ければ HEAD)
-#   WT_INCLUDE_AGENT_ASSETS
-#                     gitignore 済みのスキル / カスタムコマンドを既定でコピーするか
-#                     (既定: 1 / 0 で無効)
 set -euo pipefail
 
 WT_ROOT_DIR="${WT_ROOT_DIR:-.claude/worktrees}"
@@ -58,47 +55,10 @@ base_ref() {
 # ---------------------------------------------------------------------------
 # .worktreeinclude 展開
 #
-# コピー対象 = 「gitignore 済みの未追跡ファイル」∩「パターン」
+# コピー対象 = 「gitignore 済みの未追跡ファイル」∩「.worktreeinclude のパターン」
 # (Claude Code Desktop の仕様に合わせた AND 条件)
-# パターンは組み込みのエージェント資産 + .worktreeinclude で、
-# 解釈は一時リポジトリの .gitignore として git 本体に委譲する。
+# パターン解釈は一時リポジトリの .gitignore として git 本体に委譲する。
 # ---------------------------------------------------------------------------
-
-# エージェントのスキル / カスタムコマンドの置き場。
-#
-# git worktree には git 管理下のファイルしか入らない。これらは gitignore して
-# いることが多く、そのままだと新しい worktree に存在せず `/` メニューに
-# プロジェクトのスキルが1つも出てこないため既定でコピーする。
-# git 管理下に置いているならそもそも worktree に入るので、この一覧は素通りする。
-agent_asset_patterns() {
-  case "${WT_INCLUDE_AGENT_ASSETS:-1}" in
-    0|no|false) return 0 ;;
-  esac
-  cat <<'EOF'
-.agents/skills/**
-.agents/commands/**
-.agent/skills/**
-.gemini/skills/**
-.gemini/commands/**
-.claude/skills/**
-.claude/commands/**
-.claude/agents/**
-.codex/prompts/**
-EOF
-}
-
-# 組み込みパターンが触りうるトップレベルのディレクトリ。
-# .worktreeinclude が無いときの列挙範囲を絞り、node_modules のような
-# 巨大な gitignore 済みツリーを毎回舐めないようにするために使う。
-agent_asset_dirs() {
-  cat <<'EOF'
-.agents
-.agent
-.gemini
-.claude
-.codex
-EOF
-}
 
 copy_one() {
   # clonefile (APFS) が使えれば実体共有コピー、ダメなら通常コピー
@@ -108,9 +68,9 @@ copy_one() {
 }
 
 # シンボリックリンク (gemini skills link などが張る) は実体をコピーする。
-# Gemini CLI / Antigravity はスキルのシンボリックリンクを辿らないため
+# エージェント側がスキルのシンボリックリンクを辿らないことがあるため
 # (gemini-cli#16247, vercel-labs/skills#633)、リンクのまま複製しても
-# worktree 側で認識されない。壊れたリンクは失敗させて呼び出し側で飛ばす。
+# 認識されない。壊れたリンクは失敗させて呼び出し側で飛ばす。
 copy_deref() {
   local src=$1 dst=$2
   mkdir -p "$(dirname "$dst")"
@@ -120,30 +80,12 @@ copy_deref() {
 expand_include() {
   local main=$1 dest=$2
   local include_file="$main/.worktreeinclude"
+  [ -f "$include_file" ] || return 0
 
   local tmp
   tmp=$(mktemp -d) || die "mktemp に失敗しました"
   git init -q "$tmp"
-  agent_asset_patterns > "$tmp/.gitignore"
-  [ -f "$include_file" ] && cat "$include_file" >> "$tmp/.gitignore"
-
-  if [ ! -s "$tmp/.gitignore" ]; then     # 組み込み無効 かつ .worktreeinclude 無し
-    rm -rf "$tmp"
-    return 0
-  fi
-
-  # .worktreeinclude が無ければ組み込みパターンしか無いので列挙範囲を絞れる
-  local -a scope=()
-  local dir
-  if [ ! -f "$include_file" ]; then
-    while IFS= read -r dir; do
-      [ -d "$main/$dir" ] && scope+=("$dir")
-    done < <(agent_asset_dirs)
-    if [ "${#scope[@]}" -eq 0 ]; then
-      rm -rf "$tmp"
-      return 0
-    fi
-  fi
+  cp "$include_file" "$tmp/.gitignore"
 
   local copied=0 rel
   while IFS= read -r rel; do
@@ -161,16 +103,11 @@ expand_include() {
     fi
     copied=$((copied + 1))
   done < <(
-    if [ "${#scope[@]}" -gt 0 ]; then
-      git -C "$main" ls-files --others --ignored --exclude-standard -- "${scope[@]}"
-    else
-      git -C "$main" ls-files --others --ignored --exclude-standard
-    fi | git -C "$tmp" check-ignore --stdin 2>/dev/null || true
+    git -C "$main" ls-files --others --ignored --exclude-standard \
+      | git -C "$tmp" check-ignore --stdin 2>/dev/null || true
   )
   rm -rf "$tmp"
-  if [ "$copied" -gt 0 ] || [ -f "$include_file" ]; then
-    err "worktree へ ${copied} 件コピーしました"
-  fi
+  err ".worktreeinclude: ${copied} 件コピーしました"
 }
 
 # ---------------------------------------------------------------------------
