@@ -5,7 +5,7 @@ codex / agy / opencode / cursor-agent などの CLI エージェントを、Clau
 ```console
 $ agy -w AA
 wt: origin/main から worktree-AA を作成します
-wt: .worktreeinclude: 2 件コピーしました
+wt: .worktreeinclude: 2 個のファイルをコピーしました
 wt: /path/to/repo/.gemini/worktree/AA で agy を起動します
 ```
 
@@ -113,8 +113,6 @@ wt include <path>     # 既存 worktree へ .worktreeinclude を手動展開
 ```
 
 コピーされるのは「パターンに一致し、かつ gitignore 済みの未追跡ファイル」のみです。既存ファイルは上書きしません。macOS (APFS) では clonefile によるコピーを試み、`node_modules` のような大きなディレクトリも高速に複製できます。
-
-シンボリックリンクは実体をコピーします。スキルのシンボリックリンク探索はエージェント側の実装が不安定で、Claude Code ([#38051](https://github.com/anthropics/claude-code/issues/38051)) / Codex ([#11314](https://github.com/openai/codex/issues/11314), [#9898](https://github.com/openai/codex/issues/9898)) / Gemini CLI ([#16247](https://github.com/google-gemini/gemini-cli/issues/16247)) / Antigravity ([vercel-labs/skills#633](https://github.com/vercel-labs/skills/issues/633)) いずれにも報告があります。加えて worktree はディレクトリの深さが変わるため、相対リンクをそのまま複製すると指す先がずれます。実体を置けば両方とも回避できます。
 
 ### スキル / カスタムコマンドを持ち込む
 

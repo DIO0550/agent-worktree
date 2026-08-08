@@ -67,19 +67,6 @@ copy_one() {
   cp -c "$src" "$dst" 2>/dev/null || cp "$src" "$dst"
 }
 
-# シンボリックリンクは実体をコピーする。
-#
-# スキルのシンボリックリンク探索はどのエージェントでも不安定で、未解決の報告が
-# ある (claude-code#38051, codex#11314, gemini-cli#16247, vercel-labs/skills#633)。
-# さらに worktree はディレクトリの深さが変わるため、相対リンクをそのまま複製すると
-# 指す先がずれる。実体を置いてしまえば両方とも回避できる。
-# 壊れたリンクは失敗させて呼び出し側で飛ばす。
-copy_deref() {
-  local src=$1 dst=$2
-  mkdir -p "$(dirname "$dst")"
-  cp -RL "$src" "$dst" 2>/dev/null
-}
-
 expand_include() {
   local main=$1 dest=$2
   local include_file="$main/.worktreeinclude"
@@ -92,25 +79,16 @@ expand_include() {
 
   local copied=0 rel
   while IFS= read -r rel; do
-    # 既存は上書きしない (壊れたリンクも「在る」と見なすので -L も見る)
-    if [ -e "$dest/$rel" ] || [ -L "$dest/$rel" ]; then
-      continue
-    fi
-    if [ -L "$main/$rel" ]; then
-      copy_deref "$main/$rel" "$dest/$rel" \
-        || { err "リンク先を辿れないため飛ばしました: $rel"; continue; }
-    elif [ -f "$main/$rel" ]; then
-      copy_one "$main/$rel" "$dest/$rel"
-    else
-      continue                             # ディレクトリ項目はファイル単位で列挙済み
-    fi
+    [ -f "$main/$rel" ] || continue          # ディレクトリ項目はファイル単位で列挙済み
+    [ -e "$dest/$rel" ] && continue          # 既存ファイルは上書きしない
+    copy_one "$main/$rel" "$dest/$rel"
     copied=$((copied + 1))
   done < <(
     git -C "$main" ls-files --others --ignored --exclude-standard \
       | git -C "$tmp" check-ignore --stdin 2>/dev/null || true
   )
   rm -rf "$tmp"
-  err ".worktreeinclude: ${copied} 件コピーしました"
+  err ".worktreeinclude: ${copied} 個のファイルをコピーしました"
 }
 
 # ---------------------------------------------------------------------------
