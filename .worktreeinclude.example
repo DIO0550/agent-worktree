@@ -8,3 +8,19 @@
 .env
 .env.*
 **/.claude/settings.local.json
+
+# スキル / カスタムコマンドを gitignore している場合は、
+# 使っているエージェントの置き場を足す
+# .agents/skills/**              # Antigravity (agy) / Gemini CLI / opencode
+# .gemini/skills/**              # Gemini CLI
+# .gemini/commands/**            # Gemini CLI (.toml コマンド)
+# .opencode/skills/**            # opencode
+# .opencode/commands/**          # opencode
+# .cursor/commands/**            # Cursor CLI (cursor-agent)
+# .cursor/rules/**               # Cursor CLI (cursor-agent)
+# .claude/skills/**              # Claude Code
+# .claude/commands/**            # Claude Code
+# .codex/prompts/**              # Codex
+
+# 拡張機能ごと持ち込みたい場合の例
+# .gemini/extensions/**
